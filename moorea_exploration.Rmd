@@ -5,18 +5,172 @@ date: "Monday, October 12, 2015"
 output: html_document
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+This is an exploratory document to both:
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+* explore some of the public Moorea datasets [available online](http://mcr.lternet.edu/data/), and to 
+
+* practice using RMarkdown and GitHub
+
+
+```{r, echo= FALSE, include=FALSE}
+library(dplyr)
+library(doBy)
+library(ggplot2)
+library(DT)
+```
+
+## Data Organization and Sub-setting
+
+The first dataset is a .csv of Annual Visual Fish Surveys from Moorea since 2006, with 56918 observations in 24 variables
 
 ```{r}
-summary(cars)
+vfs <- read.csv('~/github/moorea_exploration/data/MCR_LTER_Annual_Fish_Survey_20150318.csv')
+names(vfs)
 ```
 
-You can also embed plots, for example:
+The transects have data like date, location, and habitat type of the dive site, along with the taxonomy of the species identified and their lengths, abundance, etc.
 
-```{r, echo=FALSE}
-plot(cars)
+Let's summarize some of these data and see what they look like (mostly from the doBy pkg).  Data from all years pooled at first.
+
+```{r}
+## The summaryBy() function summarizes data according to a specified function
+## and by the subset of variables you specify
+## We could make a list of the most abundant species by all individuals for all years
+abun <- summaryBy(Count~Taxonomy, data= vfs, FUN=sum, na.rm=TRUE) #summarizes the data
+abun <- abun[order(-abun[,2]),] #sorts by total abundance
+top_10 <- abun[1:10,] #top 10 most abundant species
+top_10.names <- as.vector(top_10[,'Taxonomy']) #names (for later use)
+par(mar=c(10,4,4,2))
+barplot(top_10[,2],names.arg=top_10[,1],las=3, ylim=c(0,20000),
+        border=NA, ylab='Total invidivudals, all years',cex.names=0.8,
+        main='Top ten most abundant species',cex.axis=0.8)
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Calculating mean size by habitat
+
+I want to look at which species may have ontogenetic habitat shifts between
+fringing reef, backreef, and forereef. One way to start to investigate this
+is to calculate average size for each species in each habitat, and then see
+if there are significant differences between habitats.
+
+First, let's look at all the species that have at least 10 observed individuals
+in each habitat in the data (since, presumably, some species don't utilize all
+habitats).  In other words, let's limit our later analysis by those species that 
+are represented in each habitat.
+
+```{r}
+## Original dataset, counts aggregated by species, habitat, and length bin
+sp_hab <- summaryBy(Count~Taxonomy + Habitat + Total_Length, data=vfs, FUN=sum,na.rm=TRUE)
+
+knitr::kable(head(sp_hab,8))
+
+## Function returns 1 if species is represented by at least 10 individuals in each habitat
+## and returns 0 if not
+rep_hab <- function(species) {
+  dat<-subset(sp_hab,sp_hab$Taxonomy==species) # all data for the species
+  fr <- subset(dat,dat$Habitat=='FR') # fringing reef
+  br <- subset(dat,dat$Habitat=='BA') # back reef
+  fo <- subset(dat,dat$Habitat=='FO') # forereef
+  if(sum(fr$Count.sum)>9 & sum(br$Count.sum)>9 & sum(fo$Count.sum)>9) return(1)
+  else return(0)
+}
+```
+
+Now we can limit our full dataset to just the species that are represented in all habitats
+
+```{r}
+rep_check <- sapply(sp_hab$Taxonomy,rep_hab) #check for representation
+sp_rep <- sp_hab[rep_check==1,] #keep all the rows for represented species
+sp_rep.names <- as.vector(unique(sp_rep$Taxonomy))
+
+length(unique(sp_rep$Taxonomy)) #How many species?
+```
+
+We can see that there are 69 species that fit the representation criteria.
+Now let's calculate the mean lengths for each species in each of the three 
+habitats.
+
+```{r}
+## Function for mean length by habitat
+
+species.mean<-function(data,species,habitat) {
+  sp.data <- subset(data,data$Taxonomy==species & data$Habitat==habitat)
+  hab.count <- sum(sp.data$Count.sum)
+  freq <- sp.data$Count.sum/hab.count # relative frequency of a size class
+  hab.mean <- sum(sp.data$Total_Length*freq) # mean is the sum of all length classes times their relative frequencies
+  return(cbind(hab.count,hab.mean))
+}
+
+names <- as.vector(sapply(sp_rep.names,function(x) rep(x,3),USE.NAMES=F)) #expands names list so each species has 3 habitats
+
+hab.vec <- rep(c('FR','BA','FO'),length(sp_rep.names))
+
+## Data frame of species and their mean size by habitat
+mean.lengths <- mapply(species.mean,species=names,habitat=hab.vec,MoreArgs=list(data=sp_rep))
+hab.means <- data.frame(names,hab.vec,mean.lengths[1,],mean.lengths[2,])
+
+names(hab.means)<-c('Species','Habitat','Total_Count','Mean_Length')
+
+#DT::datatable(hab.means,caption='Species Mean Length By Habitat')
+```
+
+To run an ANOVA, we have to 'expand' the data such that each individual count is
+recorded as a separate observation.  Here's a quick function to do that.
+
+```{r}
+exp.counts<- function(data,species,habitat) {
+  x <- subset(data,data$Taxonomy==species & data$Habitat==habitat)
+  # next line replicates the total length based on how many individuals were counted in that length class
+  x2 <- unlist(mapply(function(x,y) rep(x,y), x$Total_Length,x$Count.sum))
+  x2<- as.numeric(x2) #has to be a continuous vector for later ANOVA
+  x3 <- data.frame(length=x2,habitat=rep(habitat,length(x2)))
+  return(x3) #returns the data as a column of lengths and a column of habitats, so now one
+  # row is one 'observation' of length
+}
+```
+
+Let's try to look at one species after 'expanding' the data in this way.  Randomly,
+I'll use the species *Acanthurus nigricans*, the [whitecheek surgeonfish](http://www.discoverlife.org/IM/I_RR/0019/320/Acanthurus_nigricans,I_RR1947.jpg).
+
+```{r a. nigricans example}
+a_nigricans.fr <- exp.counts(sp_rep,'Acanthurus nigricans','FR') #fringing reef data expansion
+a_nigricans.br <- exp.counts(sp_rep,'Acanthurus nigricans','BA') #back reef data expansion
+a_nigricans.fo <- exp.counts(sp_rep,'Acanthurus nigricans','FO') #forereef data expansion
+
+a_nigricans.all <- rbind(a_nigricans.fr, a_nigricans.br, a_nigricans.fo) #combined
+boxplot(length~habitat,data=a_nigricans.all, xlab='Habitat',ylab='Total Length',
+        main= 'A. nigricans Total Length by Habitat')
+```
+
+Now we can do an ANOVA to test for significant difference between the three habitats
+
+```{r a. nigricans ANOVA}
+an.aov<-aov(length~habitat,data=a_nigricans.all) #the simple ANOVA for a. nigricans
+summary(an.aov)
+```
+
+We can see that for this species there is a significant (p<<0.05) difference between mean
+lengths by habitat!  We can also look closer at pairwise comparisons by using Tukey's
+Honest Significant Differences method
+
+```{r Tukey test,echo=F}
+an.tukey <- TukeyHSD(an.aov)
+an.tukey$habitat
+```
+
+For all represented species
+
+```{r ANOVAs and Tukeys all species}
+dat.all <- list()
+for (i in 1:length(sp_rep.names)) {
+  fr.dat <- exp.counts(sp_rep,sp_rep.names[i],'FR') #fringing reef data expansion
+  br.dat <- exp.counts(sp_rep,sp_rep.names[i],'BA') #back reef data expansion
+  fo.dat <- exp.counts(sp_rep,sp_rep.names[i],'FO') #forereef data expansion
+
+  dat.sp <- rbind(fr.dat,br.dat,fo.dat) #combined
+  dat.all[[sp_rep.names[i]]] <- dat.sp
+}
+```
+
