@@ -23,7 +23,7 @@ library(DT)
 
 The first dataset is a .csv of Annual Visual Fish Surveys from Moorea since 2006, with 56918 observations in 24 variables
 
-```{r}
+```{r data import}
 vfs <- read.csv('~/github/moorea_exploration/data/MCR_LTER_Annual_Fish_Survey_20150318.csv')
 names(vfs)
 ```
@@ -32,7 +32,7 @@ The transects have data like date, location, and habitat type of the dive site, 
 
 Let's summarize some of these data and see what they look like (mostly from the doBy pkg).  Data from all years pooled at first.
 
-```{r}
+```{r top ten species}
 ## The summaryBy() function summarizes data according to a specified function
 ## and by the subset of variables you specify
 ## We could make a list of the most abundant species by all individuals for all years
@@ -51,16 +51,29 @@ barplot(top_10[,2],names.arg=top_10[,1],las=3, ylim=c(0,20000),
 ## Calculating mean size by habitat
 
 I want to look at which species may have ontogenetic habitat shifts between
-fringing reef, backreef, and forereef. One way to start to investigate this
+fringing reef, backreef, and forereef, specifically species that use the
+fringing reef as a nursery. One way to start to investigate this
 is to calculate average size for each species in each habitat, and then see
 if there are significant differences between habitats.
+
+We're looking for something like this:
+
+```{r ,echo=FALSE,warning=F,message=F}
+library(png)
+library(grid)
+img <- readPNG('./data/hab_shift.png')
+grid.raster(img)
+```
+
+where the hypothesis is that the fringing reef is a nursery, and the backreef and
+forereef support larger fish.
 
 First, let's look at all the species that have at least 10 observed individuals
 in each habitat in the data (since, presumably, some species don't utilize all
 habitats).  In other words, let's limit our later analysis by those species that 
 are represented in each habitat.
 
-```{r}
+```{r data cropping}
 ## Original dataset, counts aggregated by species, habitat, and length bin
 sp_hab <- summaryBy(Count~Taxonomy + Habitat + Total_Length, data=vfs, FUN=sum,na.rm=TRUE)
 
@@ -80,7 +93,7 @@ rep_hab <- function(species) {
 
 Now we can limit our full dataset to just the species that are represented in all habitats
 
-```{r}
+```{r representation check}
 rep_check <- sapply(sp_hab$Taxonomy,rep_hab) #check for representation
 sp_rep <- sp_hab[rep_check==1,] #keep all the rows for represented species
 sp_rep.names <- as.vector(unique(sp_rep$Taxonomy))
@@ -92,7 +105,7 @@ We can see that there are 69 species that fit the representation criteria.
 Now let's calculate the mean lengths for each species in each of the three 
 habitats.
 
-```{r}
+```{r mean length by habitat function}
 ## Function for mean length by habitat
 
 species.mean<-function(data,species,habitat) {
@@ -119,7 +132,7 @@ names(hab.means)<-c('Species','Habitat','Total_Count','Mean_Length')
 To run an ANOVA, we have to 'expand' the data such that each individual count is
 recorded as a separate observation.  Here's a quick function to do that.
 
-```{r}
+```{r data expansion for ANOVA}
 exp.counts<- function(data,species,habitat) {
   x <- subset(data,data$Taxonomy==species & data$Habitat==habitat)
   # next line replicates the total length based on how many individuals were counted in that length class
@@ -160,7 +173,7 @@ an.tukey <- TukeyHSD(an.aov)
 an.tukey$habitat
 ```
 
-For all represented species
+For all represented species...
 
 ```{r ANOVAs and Tukeys all species}
 dat.all <- list() #List of data, one for each species
@@ -182,3 +195,43 @@ aov.all <- lapply(dat.all, function(x) aov(length~habitat,data=x)) #run an ANOVA
 tukey.all <- lapply(aov.all,TukeyHSD) #run a Tukey test
 ```
 
+Having the data in this way allows us to look up data, ANOVAs, and the Tukey
+tests by species name, e.g.
+
+```{r lookup example}
+tukey.all[['Zebrasoma scopas']]
+
+boxplot(length~habitat,data=dat.all[['Zebrasoma scopas']], xlab='Habitat',ylab='Total Length',
+        main= 'Z. scopas Total Length by Habitat')
+```
+
+Now we can look for only those species that have significant differences between habitats,
+first using our ANOVA results
+
+```{r significant aovs}
+## a function that takes an ANOVA and tests for significance based on p-value
+## returns 1 if significant, zero if not
+aov.sig.check <- function (anova) { 
+  
+  p <- summary(anova)[[1]][['Pr(>F)']][1] #this is how to access the p-value alone
+  
+  if(p<0.05) return(1)
+  else return(0) 
+}
+
+#now apply it to our list of ANOVAs
+sig_aovs <- sapply(aov.all, aov.sig.check) #returns a vector
+names_sig_aovs <- names(subset(sig_aovs,sig_aovs==1)) #significant species
+names_sig_aovs
+
+sig_dat <- subset(dat.all,sig_aovs==1) #make sure we crop the dataset and tukey list as well
+sig_tukey <- subset(tukey.all,sig_aovs==1)
+
+```
+
+This brings us down from 69 to 57 species.  But this doesn't necessarily mean that these
+species follow our hypothesis from above.  We have to check if species get significantly
+larger from fringe reef to back reef to fore reef, and we can use the results of the tukey
+tests to investigate this.
+
+```{r tukey check} 
