@@ -220,18 +220,63 @@ aov.sig.check <- function (anova) {
 }
 
 #now apply it to our list of ANOVAs
-sig_aovs <- sapply(aov.all, aov.sig.check) #returns a vector
-names_sig_aovs <- names(subset(sig_aovs,sig_aovs==1)) #significant species
+sig_aovs.vec <- sapply(aov.all, aov.sig.check) #returns a vector
+names_sig_aovs <- names(subset(aov.all,sig_aovs.vec==1)) #significant species
 names_sig_aovs
 
-sig_dat <- subset(dat.all,sig_aovs==1) #make sure we crop the dataset and tukey list as well
-sig_tukey <- subset(tukey.all,sig_aovs==1)
+sig_aov <-subset(aov.all,sig_aovs.vec==1)
+sig_aov_dat <- subset(dat.all,sig_aovs.vec==1) #make sure we crop the dataset and tukey list as well
+sig_aov_tukey <- subset(tukey.all,sig_aovs.vec==1)
 
 ```
 
 This brings us down from 69 to 57 species.  But this doesn't necessarily mean that these
 species follow our hypothesis from above.  We have to check if species get significantly
 larger from fringe reef to back reef to fore reef, and we can use the results of the tukey
-tests to investigate this.
+tests to investigate this, because it calculates significance for each step of the multiple
+comparisons between habitats.
 
 ```{r tukey check} 
+tukey.check <- function(tukey) { #takes a tukey test as an input
+  
+  diff.vec <- tukey$habitat[,'diff']
+  
+  #checks that there are positive differences between BA-FR, FO-FR, and FO-BA
+  if(diff.vec[1]>0 & diff.vec[2]>0 &diff.vec[3]>0) return(1)
+  else return(0)
+  }
+sig_tukey.vec <- sapply(sig_aov_tukey,tukey.check)
+names_sig_tukey <- names(subset(sig_aov_tukey,sig_tukey.vec==1)) #significant species
+names_sig_tukey
+
+dat.final <- subset(sig_aov_dat,sig_tukey.vec==1)
+aov.final <-subset(sig_aov,sig_tukey.vec==1)
+tukey.final <- subset(sig_aov_tukey,sig_tukey.vec==1)
+```
+
+Only 14 species left! How manageable!
+
+Boxplots
+
+```{r boxplots, echo=FALSE,results='hide'}
+dev.off()
+x11()
+par(mfrow=c(3,5))
+for(i in 1:length(dat.final)) {
+  species=names(dat.final)[i]
+  boxplot(length~habitat,data=dat.all[[species]],main= species)
+}
+```
+
+
+What have we ended up with? Let's look at these species
+```{r final species list, echo=FALSE}
+sp.final <- data.frame(taxonomy = names_sig_tukey)
+eng.names <- c('scissortail sergeant','teardrop butterflyfish','daisy parrotfish',
+               'goldspot seabream','threeband pennantfish','pinktail triggerfish',
+               'twosaddle goatfish','bridled parrotfish','common parrotfish',
+               'yellowband parrotfish','streamlined spinefoot','pacific gregory',
+               'blunthead wrasse','sailfin tang')
+sp.final$common <-eng.names
+write.csv(sp.final,file='data/sp list.csv')
+vfs.crop <- subset(vfs,vfs$Taxonomy%in%sp.final$taxonomy)
