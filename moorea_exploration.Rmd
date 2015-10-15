@@ -163,14 +163,22 @@ an.tukey$habitat
 For all represented species
 
 ```{r ANOVAs and Tukeys all species}
-dat.all <- list()
+dat.all <- list() #List of data, one for each species
+aov.all <- list() #List of ANOVAs, one for each species
+tukey.all <- list() #List of Tukey tests, one for each species
+
 for (i in 1:length(sp_rep.names)) {
-  fr.dat <- exp.counts(sp_rep,sp_rep.names[i],'FR') #fringing reef data expansion
-  br.dat <- exp.counts(sp_rep,sp_rep.names[i],'BA') #back reef data expansion
-  fo.dat <- exp.counts(sp_rep,sp_rep.names[i],'FO') #forereef data expansion
+  sp <- sp_rep.names[i] #species name
+  fr.dat <- exp.counts(sp_rep,sp,'FR') #fringing reef data expansion
+  br.dat <- exp.counts(sp_rep,sp,'BA') #back reef data expansion
+  fo.dat <- exp.counts(sp_rep,sp,'FO') #forereef data expansion
 
   dat.sp <- rbind(fr.dat,br.dat,fo.dat) #combined
-  dat.all[[sp_rep.names[i]]] <- dat.sp
+  dat.all[[sp]] <- dat.sp #add species to the list(s)
 }
+
+aov.all <- lapply(dat.all, function(x) aov(length~habitat,data=x)) #run an ANOVA
+  
+tukey.all <- lapply(aov.all,TukeyHSD) #run a Tukey test
 ```
 
