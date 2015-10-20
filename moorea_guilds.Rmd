@@ -1,0 +1,64 @@
+---
+title: "Moorea Guild CV and Concordance"
+author: "Owen Liu"
+date: "Tuesday, October 20, 2015"
+output: html_document
+---
+
+```{r, echo= FALSE, include=FALSE}
+library(dplyr)
+library(doBy)
+library(ggplot2)
+library(DT)
+```
+
+This an exploration of the Moorea fish coutns dataset, specifically into the relationship between persistence of species in specific habitats (concordance), and variation in abundance across censuses.  Concordance will be measured with Kendall's W.
+
+First, assemble the data
+
+```{r data}
+data <- read.csv('~/github/moorea_exploration/data/MCR_LTER_Annual_Fish_Survey_20150318.csv')
+names(data)
+
+abun <- summaryBy(Count~Taxonomy, data= data, FUN=sum, na.rm=TRUE) #summarizes the data by abundance of species
+abun <- abun[order(-abun[,2]),] #sorts by total abundance
+top_50 <- abun[1:50,] #top 50 most abundant species
+data.50 <- subset(data,data$Taxonomy %in% top_50$Taxonomy) # crop original data to top 50 species
+```
+
+We are interested in groups of species, first by family, then perhaps by trophic group.  We are interested in concordance and abundance variation across years, between sites, and between habitats
+
+```{r data summary by family}
+data.fams <- summaryBy(Count~Family+Year+Site+Habitat,data=data.50,FUN=sum,na.rm=T)
+fams <- unique(data.fams$Family)
+names(data.fams)[5] <- 'Abundance'
+names(data.fams)
+```
+
+Now we have the data in a more usable format, where counts are aggregated by family, but separated by year, site, and habitat (fringing reef vs. back reef vs. fore reef).  Next we have to calculate, for each family, the coefficient of variation in abundance with each year/site/habitat combination as a different data point.
+
+```{r coefficient of variation}
+cv.fams <- data.frame(Family=fams,CV=rep(NA,length(fams)))
+cv.fams$CV <- sapply(fams,function(x) sd(subset(data.fams$Abundance,data.fams$Family==x))/mean(subset(data.fams$Abundance,data.fams$Family==x)))
+```
+
+Now, for Kendall's W, a measure of concordance, we 
+
+
+```{r Kendall's W}
+years <- unique(data.fams$Year)
+kendall.k <- length(years) #k is the number of years
+kendall.m <- length(unique(data.fams$Site))*length(unique(data.fams$Habitat)) # m is the number of site/habitat combinations
+ranks.list = list() #for all species
+for (i in 1:length(fams)) {
+  ranks.mat <- matrix(nrow=kendall.m,ncol=kendall.k) #placeholder for individual species ranks
+  fam <- fams[i]
+  famdata <- subset(data.fams,data.fams$Family==fam)
+  for (j in 1:kendall.k) { #for each year...
+    yr.data <- famdata[famdata$Year==years[j],]
+    ranks <- rank(-yr.data$Abundance)
+    ranks.mat[,j] <- ranks
+    }
+  ranks.list[[as.character(fam)]] <- ranks.mat
+}
+```
